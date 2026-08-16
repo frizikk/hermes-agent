@@ -3254,7 +3254,8 @@ class BrowseShSource(SkillSource):
             pass
 
         source_url = item.get("sourceUrl", "") if isinstance(item, dict) else ""
-        if source_url and "raw.githubusercontent.com" in source_url:
+        from utils import base_url_host_matches
+        if source_url and base_url_host_matches(source_url, "raw.githubusercontent.com"):
             return source_url
         return None
 
@@ -3393,7 +3394,7 @@ class OptionalSkillSource(SkillSource):
             name=name,
             files=files,
             source="official",
-            identifier=f"official/{skill_dir.relative_to(self._optional_dir)}",
+            identifier=f"official/{skill_dir.resolve().relative_to(self._optional_dir.resolve()).as_posix()}",
             trust_level="builtin",
         )
 
@@ -3998,7 +3999,7 @@ def install_from_quarantine(
         trust_level=bundle.trust_level,
         scan_verdict=scan_result.verdict,
         skill_hash=content_hash(install_dir),
-        install_path=str(install_dir.relative_to(_skills_dir())),
+        install_path=install_dir.resolve().relative_to(_skills_dir().resolve()).as_posix(),
         files=list(bundle.files.keys()),
         metadata=bundle.metadata,
         scan_provenance=scan_provenance or getattr(scan_result, "scan_provenance", None),
@@ -4055,14 +4056,27 @@ def uninstall_skill(skill_name: str) -> Tuple[bool, str]:
 
 
 def bundle_content_hash(bundle: SkillBundle) -> str:
-    """Compute a deterministic hash for an in-memory skill bundle."""
+    """Compute a deterministic hash for an in-memory skill bundle.
+
+    MUST stay symmetric with ``tools.skills_guard.content_hash`` (which
+    hashes the same skill from disk). That function keys files by
+    ``relative_to(...).as_posix()`` — forward slashes on every OS. Bundle
+    keys built on Windows carry backslashes (``str(f.relative_to(dir))``),
+    which changed both the hashed bytes AND the sort order, so every
+    installed skill reported ``update_available`` forever on Windows
+    (#62310). Normalize to POSIX separators before sorting/hashing.
+    """
     h = hashlib.sha256()
-    for rel_path in sorted(bundle.files):
+    normalized = {
+        rel_path.replace("\\", "/"): content
+        for rel_path, content in bundle.files.items()
+    }
+    for rel_path in sorted(normalized):
         # Include the path so swapping file contents between two paths
         # changes the hash (avoids filename-swap evading update detection).
         h.update(rel_path.encode("utf-8"))
         h.update(b"\x00")
-        content = bundle.files[rel_path]
+        content = normalized[rel_path]
         if isinstance(content, bytes):
             h.update(content)
         else:

@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { getCronJobOutput, getCronJobOutputs } from '@/hermes'
 import { TRANSLATIONS } from '@/i18n'
-import { $cronFocus } from '@/store/cron'
+import { $cronFocus, setCronFocusOutput } from '@/store/cron'
+import { $notifications } from '@/store/notifications'
 
 import { CronJobRuns } from './index'
 
@@ -17,6 +18,7 @@ describe('CronJobRuns', () => {
   afterEach(() => {
     cleanup()
     $cronFocus.set(null)
+    $notifications.set([])
     vi.clearAllMocks()
   })
 
@@ -57,5 +59,26 @@ describe('CronJobRuns', () => {
 
     expect(await screen.findByText(TRANSLATIONS.en.cron.failedLoad)).toBeTruthy()
     expect(screen.queryByText(TRANSLATIONS.en.cron.noRuns)).toBeNull()
+  })
+
+  it('notifies and clears focus instead of silently no-oping when the focused run is gone', async () => {
+    vi.mocked(getCronJobOutputs).mockResolvedValue([
+      {
+        byte_size: 72,
+        created_at: 1_786_435_200,
+        filename: '2026-08-11_09-00-00.md',
+        id: '2026-08-11_09-00-00'
+      }
+    ])
+
+    setCronFocusOutput('report-job', '2026-08-01_00-00-00', 'worker_alpha')
+
+    render(<CronJobRuns c={TRANSLATIONS.en.cron} jobId="report-job" profile="worker_alpha" />)
+
+    await screen.findByRole('button', { name: /2026-08-11_09-00-00\.md/ })
+
+    await waitFor(() => expect($cronFocus.get()).toBeNull())
+    expect(getCronJobOutput).not.toHaveBeenCalled()
+    expect($notifications.get().some(n => n.message === TRANSLATIONS.en.cron.outputUnavailable)).toBe(true)
   })
 })
